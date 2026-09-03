@@ -3,3 +3,6 @@ sdkconfig
 sdkconfig.old
 .idea
 venv
+__pycache__/
+*.pyc
+EOF

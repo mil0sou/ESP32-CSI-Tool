@@ -1,150 +1,144 @@
-# ESP32 CSI Tool
+# ESP32 WiFi CSI presence detection
 
-[ESP32 CSI Tool Website](https://stevenmhernandez.github.io/ESP32-CSI-Tool/)
+Détection de présence dans une pièce via le Channel State Information (CSI) d'un
+ESP32-S3. L'ESP capture les perturbations du canal WiFi causées par le mouvement,
+un script Python en tire un indicateur de mouvement affiché en temps réel.
 
-The purpose of this project is to allow for the collection of Channel State Information (CSI) from the ESP32 Wi-Fi enabled microcontroller. 
-By collecting this data rich signal source, we can use this information for tasks such as Wi-Fi Sensing and Device-free Localization directly from the small, self contained ESP32 microcontroller.  
+Basé sur [ESP32-CSI-Tool](https://github.com/StevenMHernandez/ESP32-CSI-Tool),
+adapté pour ESP-IDF v5+ / v6.
 
-The following projects can be found in this repository:
+## Matériel
 
-* `./active_sta` - *Active CSI collection (Station)* - Connects to some Access Point (AP) (Router or another ESP32) and sends packet requests. (Typically used as CSI-TX) 
-* `./active_ap` - *Active CSI collection (AP)* - AP which can be connected to by devices (ESP32, see previous). (Typically used as CSI-RX)
-* `./passive` - *Passive CSI collection* - Passively listens for CSI frames on a given channel (default: channel 3).
-
-Each project automatically sends the collected CSI data to both serial port and SD card (if present). 
-These settings can be configured as described below. 
-
-In addition to these ESP32 specific projects, we also consider methods for analyzing CSI in Python and MATLAB (See **Analysing CSI Data** below). 
+- 1× ESP32-S3 (l'ESP32 classique et le C3 ne conviennent pas)
+- 1× câble USB **data** de qualité (les câbles charge-only causent des brownouts)
+- Une box WiFi à laquelle l'ESP peut se connecter
 
 ## Installation
 
-First, Install Espressif IoT Development Framework (ESP-IDF) by following their [step by step installation guide](https://docs.espressif.com/projects/esp-idf/en/release-v4.3/esp32/get-started/index.html).
-Notice, this project requires **version (v4.3) of ESP-IDF**.  
+### ESP-IDF
 
-**Important:** It is important that you are able to successfully build and flash the example project from the esp-idf guide onto your own esp32.
-If you have issues building the example project on your hardware, **do not create an issue in this github repo**.
-We will not be able to assist with general ESP32 issues (those issues that are unrelated to this project).  
-
-Next, clone this repository:
-
-```
-git clone https://github.com/StevenMHernandez/esp32-csi-tool
+```bash
+mkdir -p ~/esp && cd ~/esp
+git clone --recursive https://github.com/espressif/esp-idf.git
+cd esp-idf
+./install.sh all
 ```
 
-Finally, decide which sub-project you would like to flash to your ESP32(s). 
-The simplest case would be to use two ESP32s. 
-One using the *Active CSI collection (Station)* codebase and the other using the *Active CSI collection (AP)* codebase. 
-To begin working with a given codebase, open a terminal and change into the respective directory.
+À sourcer dans chaque nouveau terminal :
 
-```
-cd ./active_sta # For Active Station (Typically used as the CSI-TX)
-# OR
-cd ./active_ap # For Active Access Point (Typically used as the CSI-RX)
-# OR
-cd ./passive # For Passive CSI collection (Used as a passive-RX)
+```bash
+. ~/esp/esp-idf/export.sh
 ```
 
-We can now begin configuring and flashing your ESP32.
+### Le repo
 
-## Configuration (ESP-IDF)
-
-The ESP-IDF provides great control over project configuration. 
-This configuration can be updated by running the following command from your terminal.
-
+```bash
+mkdir -p ~/Documents/wifidetect && cd ~/Documents/wifidetect
+git clone https://github.com/StevenMHernandez/ESP32-CSI-Tool.git
 ```
+
+### Dépendances Python
+
+```bash
+pip install pyserial matplotlib numpy
+```
+
+## Identification de l'ESP
+
+```bash
+lsusb
+ls /dev/ttyACM* /dev/ttyUSB*
+esptool.py --port /dev/ttyACM0 chip_id
+```
+
+Le port sera référencé comme `/dev/ttyACM0` dans la suite, adapter si besoin.
+
+## Configuration du firmware
+
+```bash
+cd ~/Documents/wifidetect/ESP32-CSI-Tool/active_sta
+. ~/esp/esp-idf/export.sh
+idf.py set-target esp32s3
+```
+
+Deux patches pour compatibilité IDF v5+ :
+
+```bash
+# Header renommé en IDF v5
+sed -i 's|#include "esp_spi_flash.h"|#include "spi_flash_mmap.h"|' main/main.cc
+
+# Priorité de tâche FreeRTOS (100 > MAX 25)
+sed -i 's/(void \*) &is_wifi_connected, 100,/(void *) \&is_wifi_connected, 5,/' main/main.cc
+```
+
+Puis configuration :
+
+```bash
 idf.py menuconfig
 ```
 
-It is important to notice that these configurations are project specific and will not automatically be copied between sub-projects. 
-So for example, make sure when you change the Wi-Fi password in *Active CSI collection (AP)*, you also update this configuration in the *Active CSI collection (Station)* project as well.
+- `ESP32 CSI Tool Config` → renseigner SSID + password de la box, cocher "collect CSI"
+- `Component config → Wi-Fi` → cocher `WiFi CSI(Channel State Information)`
 
-The following configurations are important for this project:
+## Flash
 
-1. `Serial flasher config > 'idf.py monitor' baud rate > Custom Baud Rate`
-2. `Serial flasher config > Custom baud rate value > 921600` This allows more data to be transmitted on the Serial port
-3. `Component config > Common ESP32-related > Channel for console output > Custom UART`
-4. `Component config > Common ESP32-related > UART console baud rate > 921600`
-5. `Component config > Wi-Fi > WiFi CSI(Channel State Information)` (Press space to select)
-6. `Component config > FreeRTOS > Tick rate (Hz) > 1000`
-7. `ESP32 CSI Tool Config > ****` all options in this menu can be specified per your experiment requirements.
-
-**NOTE:** For some systems, other baud rates may be required. Good options to try are `921600`, `1000000`, `1152000`, `1500000`, and `1552000`.  
-**The higher baud rate the better! Baud rate is extremely important to achieve high sampling rates without lag!**  
-If you have a problem, please leave any relevant information such as operating system, esp-idf version, list of all baud rates work and baud rates that do not work etc in [issue #5](https://github.com/StevenMHernandez/ESP32-CSI-Tool/issues/5). 
-
-## Flash ESP32
-
-Run the following command from within one of the sub-project's directories.
-
-```
-idf.py flash monitor
+```bash
+idf.py -p /dev/ttyACM0 flash monitor
 ```
 
-This will flash the ESP32 and once completed, will print incoming data from the freshly programmed ESP32's serial port. 
-To exit monitoring, use `ctrl+]`
+Récupérer l'IP de l'ESP dans les logs (`sta ip: 192.168.1.XX`), quitter le
+monitor avec `Ctrl+]`.
 
-## Collecting CSI Data
+## Scripts Python
 
-There are two methods to collect CSI data. 
-If your ESP32 has an SD card on board (such as the TTGO T8 V1.7 ESP32), the ESP32 will automatically detect the SD card and automatically output CSI data to a simple csv file.
+Placés dans `utils/` du repo. `csi_bridge.py` lit le port série en gardant DTR
+bas (évite le reset auto). `csi_presence.py` calcule l'écart-type glissant des
+amplitudes CSI par sous-porteuse et affiche une fenêtre matplotlib avec bande
+rouge quand un mouvement est détecté.
 
-If the device does not have an SD card or you wish to collect the data directly from the Serial port on your computer, you can run the following command:
+## Utilisation
 
-```
-# macOS or Linux
-idf.py monitor | grep "CSI_DATA" > my-experiment-file.csv
+Deux terminaux.
 
-# Windows
-idf.py monitor | findstr "CSI_DATA" > my-experiment-file.csv 
-```
+Générateur de trafic (l'ESP ne produit du CSI que sur les paquets reçus) :
 
-Because the clocks on the ESP32 are not synchronized with any real world time, it can be difficult to sync this data with other external data sources or sensors. 
-To help with this, we can pass output first through a python script which appends a timestamp from your computer.
-
-```
-idf.py monitor | python ../python_utils/serial_append_time.py > my-experiment-file.csv
+```bash
+sudo ping -i 0.02 <IP_ESP>
+sudo ping -i 0.02 192.168.1.91 -q
 
 ```
 
-## Analysing CSI Data
+Lecture + visualisation :
 
-Once data has been collected, we now wish to run analysis and (most likely) apply deep learning algorithms on the collected data. 
-Luckily, the output from the esp32 is a simple CSV file, thus we can pass the contents to any available CSV parser in our language of choice (Python, MATLAB, R, etc.). 
-The use of CSV was selected for its simplicity and small size when compared with the likes of XML or JSON.
-
-## Visualizing CSI Data
-
-If you wish to visualize the incoming CSI amplitude data in real-time, use the `./python_utils/serial_plot_csi_live.py` script. 
-First, install the python plotting dependencies.
-
-```
-pip install numpy matplotlib
+```bash
+python3 -u utils/csi_bridge.py | python3 -u utils/csi_presence.py
 ```
 
-Then, to visualize the CSI amplitude, use the following command. 
+Le terminal affiche `rate=…Hz motion=…` deux fois par seconde. Rester immobile
+5-10 s pour observer la baseline, puis bouger dans l'axe box↔ESP pour voir la
+courbe décoller.
 
-```
-idf.py monitor | python ../python_utils/serial_plot_csi_live.py
-```
+## Paramètres
 
-Currently this script only visualizes subcarrier #44. You can change this by editing the code directly.
+En haut de `utils/csi_presence.py` :
 
-## Advanced:
+- `FIXED_THRESHOLD` — seuil au-dessus duquel une présence est déclarée.
+  Environnement calme : ~2.0. Openspace bruyant : ~4.5. À caler à mi-chemin
+  entre motion au repos et motion en mouvement observés.
+- `WINDOW_SEC` — fenêtre glissante en secondes. 1.0 pour de la réactivité,
+  2.0 pour absorber les trous de rate CSI.
 
-### Setting Local Time
+## Notes
 
-Because the ESP32 is not connected to the internet as a whole, it is not possible to automatically set the clock time locally.
-To handle this, we offer the ability to set the time in a couple of different ways.
+- L'ESP a besoin de trafic **entrant** pour produire du CSI en continu. Le ping
+  vers son IP est ce qui garantit un flux stable.
+- L'IP de l'ESP peut changer au reboot ; la relever à chaque session via
+  `idf.py monitor` ou le DHCP de la box.
+- La box peut rate-limiter les réponses ICMP, plafonnant le rate autour de
+  25-30 Hz même avec un ping à 50 pps.
+- La qualité de la détection dépend fortement de l'environnement : très bonne
+  dans une pièce calme, dégradée en openspace saturé de trafic WiFi.
 
-First, while running `idf.py monitor` we can type the following `SETTIME: 123123123123` then `ENTER` where the number 123123123123 indicates the current UNIX time in seconds.
 
-Additionally, the access point code in `./active_ap` will automatically send its current timestamp to any connected station running the `./active_sta` sub-project.
-This means that you only need to set the time for the access point and all other nodes will synchronize automatically.
 
-Finally, the simplest method is to simply run the output of `idf.py monitor` through a utility function which appends the correct timestamp to the output when received on your computer as described in the **Collecting CSI Data* section above.
 
-### Misc.
-
-[ESP32 CSI Tool](https://stevenmhernandez.github.io/ESP32-CSI-Tool/) developed by [Steven M. Hernandez](https://github.com/StevenMHernandez)
-
-[Cite this Tool with BibTeX](https://raw.githubusercontent.com/StevenMHernandez/ESP32-CSI-Tool/master/docs/bibtex/esp32_csi_tool_wowmom.bib)

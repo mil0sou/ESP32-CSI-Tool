@@ -7,7 +7,7 @@ from wait_timer import WaitTimer
 from read_stdin import readline, print_until_first_csi_line
 
 # Set subcarrier to plot
-subcarrier = 44
+subcarrier = 25
 
 # Wait Timers. Change these values to increase or decrease the rate of `print_stats` and `render_plot`.
 print_stats_wait_timer = WaitTimer(1.0)
